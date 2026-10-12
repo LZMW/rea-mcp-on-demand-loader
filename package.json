@@ -1,0 +1,35 @@
+{
+  "name": "rea-mcp-on-demand-loader",
+  "version": "1.0.0",
+  "description": "On-demand (lazy) tool loading proxy for the REA (Reverse Engineer Anything) MCP server — keep 170+ reverse-engineering tools out of your agent's catalog until you actually need them.",
+  "type": "module",
+  "bin": {
+    "rea-mcp-proxy": "./rea-mcp-proxy.mjs"
+  },
+  "files": [
+    "rea-mcp-proxy.mjs",
+    "test-proxy.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.12"
+  },
+  "keywords": [
+    "mcp",
+    "rea",
+    "reverse-engineering",
+    "on-demand",
+    "lazy-loading",
+    "model-context-protocol",
+    "deepseek-harness",
+    "dsh",
+    "agent",
+    "tools"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LZMW/rea-mcp-on-demand-loader.git"
+  }
+}
