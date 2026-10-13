@@ -34,23 +34,24 @@ MCP client (agent)  ⇄  rea-mcp-proxy.mjs (filters tools/list, relays everythin
 - Tool-group assignment is explicit and verified at startup: if a `rea-agents` upgrade
   adds or renames a tool, the proxy warns instead of silently dropping it.
 
-**Default exposure: `core` (10 tools) + 4 control tools = 14.** The other ~156 tools
-load on demand.
+**Default exposure: zero analysis tools** — only the 4 loader control tools
+(`rea_tools_status` / `rea_tools_enable` / `rea_tools_disable` / `rea_tools_reset`)
+are visible. All 170+ REA tools — `core` included — load on demand.
 
 ### Control tools (always visible)
 
 | Tool | Effect |
 |---|---|
 | `rea_tools_status` | Show which groups are enabled, tool counts, and how to load more. |
-| `rea_tools_enable` | Enable group(s): `{"groups":["native","javascript"]}` or `["all"]`. |
+| `rea_tools_enable` | Enable group(s): `{"groups":["core","native","javascript"]}` or `["all"]`. |
 | `rea_tools_disable` | Disable group(s): `{"groups":["web"]}`. |
-| `rea_tools_reset` | Back to default: `core` only. |
+| `rea_tools_reset` | Back to default: no analysis tools exposed. |
 
 ### Tool groups
 
 | Group | Tools | Domain |
 |---|---|---|
-| **core** (always on) | 10 | session / evidence bundle / navigation basics |
+| **core** | 10 | session / evidence bundle / navigation basics |
 | native | 56 | functions, assembly, pseudo-code, strings, symbols, xrefs, decompile, ObjC/Swift |
 | apple | 9 | Mach-O, signature, plist, asset catalog, interface builder, dylib |
 | managed | 7 | .NET PE/CLI members & reconstruction |
@@ -125,10 +126,11 @@ Other MCP clients: register `node <abs>/rea-mcp-proxy.mjs` as a stdio MCP server
 
 ### 3. Use it
 
-The agent sees only 14 tools by default. To analyze a domain it should:
+The agent sees only the 4 loader control tools by default (zero analysis tools).
+To analyze a domain it should:
 
 1. `rea_tools_status` — see what's on and how to load more;
-2. `rea_tools_enable` `{"groups":["javascript"]}` — tools appear immediately;
+2. `rea_tools_enable` `{"groups":["core","javascript"]}` — tools appear immediately;
 3. `rea_tools_disable` / `rea_tools_reset` — slim the catalog again when done.
 
 ---
@@ -140,8 +142,9 @@ node test-proxy.mjs
 ```
 
 Runs a full simulated client session against the proxy (16 assertions):
-initialize → default 14 tools → enable `javascript` → `list_changed` → 25 tools →
-real tool call relayed to REA → disable → reset → enable all (174).
+initialize → default 4 control tools (no analysis tools) → enable `core`+`javascript`
+→ `list_changed` → 25 tools → real tool call relayed to REA → disable → reset (back to 4)
+→ enable all (174).
 
 ---
 
