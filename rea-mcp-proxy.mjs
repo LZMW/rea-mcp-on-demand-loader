@@ -198,17 +198,15 @@ const groupOf = new Map(); // toolName -> group
 let fullTools = null;
 let warmPromise = null;
 
-// The real rea server only answers tools/list after it has received
-// notifications/initialized; defer warm-up until the client's initialized
-// notification has been relayed to it (stdio ordering keeps the writes in
-// order, so warm-up tools/list always lands after initialized).
-let readyResolve;
-const ready = new Promise((r) => { readyResolve = r; });
-
 const internal = new Map(); // warm-up request ids -> {resolve,reject}
 const INTERNAL_ID_BASE = 900000;
 let internalSeq = 0;
 const initializeIds = new Set(); // client ids whose responses need the loader hint
+
+// Protocol 2026-07-28+ envelope captured from the client's requests, replayed
+// on our internal requests to the real server (rea enforces it) and required
+// on our own responses (`resultType: "complete"`).
+let clientMeta = null;
 
 buildGroupIndex(); // populate groupOf (after the maps above are declared)
 
@@ -274,19 +272,24 @@ readline.createInterface({ input: child.stdout }).on('line', (line) => {
     if (msg.result && typeof msg.result.instructions === 'string') {
       msg.result.instructions += LOADER_HINT;
     }
+    // rea has now fully processed the client's initialize. Warm the catalog
+    // from this point: the first client tools/list can be answered from cache.
+    // Do NOT gate on notifications/initialized — modern MCP SDK clients
+    // (protocol 2026-07-28+) use subscriptions/listen and may never send it.
+    warmCatalog();
   }
 
   writeLine(msg);
 });
 
-// ── Warm-up the full catalog (after the real server is initialized) ────────
+// ── Warm-up the full catalog (after the real server answered initialize) ───
 function warmCatalog() {
   if (warmPromise) return warmPromise;
   warmPromise = (async () => {
-    await ready; // wait until the real server received notifications/initialized
     const id = INTERNAL_ID_BASE + (++internalSeq);
     const p = new Promise((resolve, reject) => internal.set(id, { resolve, reject }));
-    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/list', params: {} }) + '\n');
+    const params = clientMeta ? { _meta: clientMeta } : {};
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/list', params }) + '\n');
     try {
       const res = await p;
       fullTools = Array.isArray(res) ? res : (res?.tools ?? []);
@@ -320,6 +323,13 @@ readline.createInterface({ input: process.stdin }).on('line', async (line) => {
   let msg; try { msg = JSON.parse(line); } catch { return; }
   const { id, method, params } = msg;
 
+  // Capture the client's protocol-2026 envelope (protocolVersion + client
+  // capabilities) from whichever request carries it, so our internal requests
+  // to the real server can mirror it.
+  if (params && typeof params === 'object' && params._meta && typeof params._meta === 'object') {
+    clientMeta = params._meta;
+  }
+
   if (method === 'tools/list') {
     const all = (await warmCatalog()) ?? [];
     const visible = all.filter((t) => {
@@ -327,14 +337,16 @@ readline.createInterface({ input: process.stdin }).on('line', async (line) => {
       return g === 'core' || enabled.has(g);
     });
     const tools = [...visible, ...Object.keys(CONTROL).map(controlToolDefinition)];
-    writeLine({ jsonrpc: '2.0', id, result: { tools } });
+    // Protocol 2026-07-28 requires resultType/ttlMs/cacheScope on list results;
+    // legacy clients ignore the extra fields.
+    writeLine({ jsonrpc: '2.0', id, result: { resultType: 'complete', ttlMs: 0, cacheScope: 'private', tools } });
     return;
   }
 
   if (method === 'tools/call' && params && Object.prototype.hasOwnProperty.call(CONTROL, params.name)) {
     const c = CONTROL[params.name];
     Promise.resolve(c.run(params.arguments ?? {}))
-      .then((text) => writeLine({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } }))
+      .then((text) => writeLine({ jsonrpc: '2.0', id, result: { resultType: 'complete', content: [{ type: 'text', text }] } }))
       .catch((err) => writeLine({ jsonrpc: '2.0', id, error: { code: -32603, message: String(err?.message ?? err) } }));
     return;
   }
@@ -342,13 +354,6 @@ readline.createInterface({ input: process.stdin }).on('line', async (line) => {
   if (method === 'initialize') {
     initializeIds.add(id);
     child.stdin.write(line + '\n');
-    return;
-  }
-
-  if (method === 'notifications/initialized') {
-    readyResolve();
-    child.stdin.write(line + '\n');
-    warmCatalog();
     return;
   }
 
