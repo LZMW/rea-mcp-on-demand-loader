@@ -31,10 +31,11 @@ const spawnSpec = REA_PROXY_SCRIPT
     : { command: 'rea', args: ['--mcp'], shell: false };
 
 const LOADER_HINT =
-  '\n\nREA tool loading is ON-DEMAND: only the "core" group (session / evidence / navigation basics) is enabled by default.\n' +
-  'To use a domain, first call mcp__rea__rea_tools_status to list groups and counts, then call\n' +
-  'mcp__rea__rea_tools_enable with {"groups":["<group>", ...]} (or ["all"]). Enabled tools appear immediately via list_changed.\n' +
-  'Core is always on and cannot be disabled; use rea_tools_disable / rea_tools_reset to slim the catalog again.';
+  '\n\nREA tool loading is ON-DEMAND: NO analysis tools are exposed by default — only the 4 loader control tools ' +
+  '(rea_tools_status / rea_tools_enable / rea_tools_disable / rea_tools_reset).\n' +
+  'To use REA, first call mcp__rea__rea_tools_status to list domains and counts, then call\n' +
+  'mcp__rea__rea_tools_enable with {"groups":["core","<domain>", ...]} (or ["all"]). Enabled tools appear immediately via list_changed.\n' +
+  'Use rea_tools_disable / rea_tools_reset to hide them again.';
 
 // ── Tool groups (exact rea tool names) ─────────────────────────────────────
 const CORE = [
@@ -120,14 +121,15 @@ const GROUPS = {
   ],
 };
 
-// ── Proxy control tools (always exposed) ───────────────────────────────────
+// ── Proxy control tools (always exposed — the only visible tools by default) ──
+const ALL_GROUPS = ['core', ...Object.keys(GROUPS)]; // every loadable group, core included
 const CONTROL = {
   rea_tools_status: {
     description:
       'REA on-demand loader: report which tool groups are currently enabled, ' +
-      'tool counts, and how to load more. REA starts with only the "core" group ' +
-      '(session/evidence/navigation basics). Enable a domain (native, javascript, ' +
-      'web, android, adb, managed, apple, process, artifact, electron, ' +
+      'tool counts, and how to load more. NO REA analysis tools are exposed by ' +
+      'default — only these loader control tools. Enable a domain (core, native, ' +
+      'javascript, web, android, adb, managed, apple, process, artifact, electron, ' +
       'reconstruction) with rea_tools_enable when you actually need those tools; ' +
       'DSH re-syncs the tool catalog live.',
     inputSchema: { type: 'object', properties: {} },
@@ -135,15 +137,15 @@ const CONTROL = {
   },
   rea_tools_enable: {
     description:
-      'Enable one or more REA tool groups on demand, e.g. {"groups":["native","javascript"]} ' +
+      'Enable one or more REA tool groups on demand, e.g. {"groups":["core","native","javascript"]} ' +
       'or ["all"]. The corresponding tools are then exposed to the agent immediately ' +
-      '(DSH re-syncs on tools/list_changed). Core is always on and cannot be disabled.',
+      '(DSH re-syncs on tools/list_changed). By default no analysis tools are loaded.',
     inputSchema: {
       type: 'object',
       properties: {
         groups: {
           type: 'array', items: { type: 'string' },
-          description: 'Group names to enable, or ["all"] for everything.',
+          description: 'Group names to enable (core, native, apple, managed, android, adb, web, electron, javascript, process, artifact, reconstruction), or ["all"].',
         },
       },
       required: ['groups'],
@@ -153,8 +155,8 @@ const CONTROL = {
       let changed = false;
       for (const g of target) {
         const key = String(g);
-        if (key === 'all') { for (const name of Object.keys(GROUPS)) changed = enabled.add(name) || changed; }
-        else if (Object.prototype.hasOwnProperty.call(GROUPS, key)) changed = enabled.add(key) || changed;
+        if (key === 'all') { for (const name of ALL_GROUPS) changed = enabled.add(name) || changed; }
+        else if (ALL_GROUPS.includes(key)) changed = enabled.add(key) || changed;
         else return `unknown group "${g}". Run rea_tools_status for the list.`;
       }
       if (changed) notifyListChanged();
@@ -163,8 +165,9 @@ const CONTROL = {
   },
   rea_tools_disable: {
     description:
-      'Disable REA tool groups to slim the catalog again (core cannot be disabled). ' +
-      'Pass group names, e.g. {"groups":["native"]}.',
+      'Disable REA tool groups to slim the catalog again. Pass group names, ' +
+      'e.g. {"groups":["native"]}. Disabling every group leaves only the loader ' +
+      'control tools visible.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -175,14 +178,14 @@ const CONTROL = {
     run: async ({ groups }) => {
       let changed = false;
       for (const g of Array.isArray(groups) ? groups : []) {
-        if (Object.prototype.hasOwnProperty.call(GROUPS, String(g))) changed = enabled.delete(String(g)) || changed;
+        if (ALL_GROUPS.includes(String(g))) changed = enabled.delete(String(g)) || changed;
       }
       if (changed) notifyListChanged();
       return statusText();
     },
   },
   rea_tools_reset: {
-    description: 'Reset REA to the default on-demand state: only the core group enabled.',
+    description: 'Reset REA to the default on-demand state: no analysis tools exposed (loader control tools only).',
     inputSchema: { type: 'object', properties: {} },
     run: async () => {
       enabled.clear();
@@ -193,7 +196,7 @@ const CONTROL = {
 };
 
 // ── State ──────────────────────────────────────────────────────────────────
-const enabled = new Set(); // empty => core only
+const enabled = new Set(); // empty => only the control tools are visible
 const groupOf = new Map(); // toolName -> group
 let fullTools = null;
 let warmPromise = null;
@@ -223,13 +226,14 @@ function notifyListChanged() {
 
 function statusText() {
   const lines = ['REA on-demand loader status', '-------------------------------'];
-  lines.push(`core (always on): ${CORE.length} tools`);
-  for (const [name, names] of Object.entries(GROUPS)) {
-    lines.push(`${enabled.has(name) ? '[ON ]' : '[off]'} ${name.padEnd(14)} ${names.length} tools`);
+  for (const name of ALL_GROUPS) {
+    const count = name === 'core' ? CORE.length : GROUPS[name].length;
+    lines.push(`${enabled.has(name) ? '[ON ]' : '[off]'} ${name.padEnd(14)} ${count} tools`);
   }
   lines.push('-------------------------------');
+  lines.push('No analysis tools are exposed by default — only the 4 loader controls.');
   lines.push('Enable a domain with: rea_tools_enable {groups:["<group>", ...]}');
-  lines.push('e.g. {"groups":["javascript"]} for JS/Electron static analysis,');
+  lines.push('e.g. {"groups":["core","javascript"]} for session + JS/Electron analysis,');
   lines.push('{"groups":["native"]} for binary analysis, or {"groups":["all"]}.');
   lines.push('Disable / reset with rea_tools_disable / rea_tools_reset.');
   return lines.join('\n');
@@ -332,9 +336,11 @@ readline.createInterface({ input: process.stdin }).on('line', async (line) => {
 
   if (method === 'tools/list') {
     const all = (await warmCatalog()) ?? [];
+    // Only enabled groups are exposed. By default `enabled` is empty, so the
+    // catalog carries just the loader control tools (zero analysis tools).
     const visible = all.filter((t) => {
       const g = groupOf.get(t.name);
-      return g === 'core' || enabled.has(g);
+      return g !== undefined && enabled.has(g);
     });
     const tools = [...visible, ...Object.keys(CONTROL).map(controlToolDefinition)];
     // Protocol 2026-07-28 requires resultType/ttlMs/cacheScope on list results;
